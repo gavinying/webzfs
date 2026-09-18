@@ -88,7 +88,7 @@ The application automatically detects the operating system and adapts its behavi
 
 **Linux:**
 ```bash
-git clone https://github.com/webzfs/webzfs.git
+git clone https://github.com/gavinying/webzfs.git
 cd webzfs
 chmod +x install_linux.sh
 sudo ./install_linux.sh
@@ -102,7 +102,7 @@ The installation script automatically:
 
 **FreeBSD:**
 ```bash
-git clone https://github.com/webzfs/webzfs.git
+git clone https://github.com/gavinying/webzfs.git
 cd webzfs
 chmod +x install_freebsd.sh
 sudo ./install_freebsd.sh
@@ -195,7 +195,7 @@ If you want to develop directly from your git clone without installing to `/opt/
 
 ```bash
 # Clone the repository
-git clone https://github.com/webzfs/webzfs.git
+git clone https://github.com/gavinying/webzfs.git
 cd webzfs
 
 # Run the setup script (only needed once)
@@ -245,7 +245,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- **GitHub**: [https://github.com/q5sys/webzfs](https://github.com/webzfs/webzfs/issues)
+- **GitHub**: [https://github.com/q5sys/webzfs](https://github.com/gavinying/webzfs/issues)
 
 ---
 
