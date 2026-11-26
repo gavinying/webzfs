@@ -29,7 +29,7 @@ PYTHON_TAG="cp312"
 
 # Wheel packages to download (these require compilation without pre-built wheels)
 # Versions must match the pins in requirements.txt.
-WHEEL_PACKAGES="cryptography-49.0.0 markupsafe-3.0.3 psutil-7.2.2 pydantic_core-2.46.4 bcrypt-5.0.0 cffi-2.1.0 pynacl-1.6.2"
+WHEEL_PACKAGES="cryptography-50.0.2 markupsafe-3.0.3 psutil-7.2.2 pydantic_core-2.46.4 bcrypt-5.0.0 cffi-2.1.0 pynacl-1.6.2"
 
 # Determine the source directory (where this script is located)
 SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -213,6 +213,18 @@ echo
 # Copy application files to installation directory (preserving config)
 echo "Updating application files from $SOURCE_DIR to $INSTALL_DIR..."
 
+# config/gunicorn.conf.py is application code, not user configuration. All
+# bind settings (BIND_IP, PORT, BIND, SOCKET_UMASK, WORKERS) live in .env and
+# are loaded by the current gunicorn.conf.py. Older installs that skipped this
+# file kept a copy that never reads .env and always binds to 127.0.0.1.
+# Back up the installed copy when it differs, then let it be replaced.
+GUNICORN_CONF="${INSTALL_DIR}/config/gunicorn.conf.py"
+if [ -f "$GUNICORN_CONF" ] && ! cmp -s "$GUNICORN_CONF" "${SOURCE_DIR}/config/gunicorn.conf.py"; then
+    cp -p "$GUNICORN_CONF" "${GUNICORN_CONF}.bak"
+    printf "${YELLOW}!${NC} Replacing config/gunicorn.conf.py; previous copy saved as config/gunicorn.conf.py.bak\n"
+    printf "${YELLOW}!${NC} Set bind options (BIND_IP, PORT, BIND) in ${INSTALL_DIR}/.env\n"
+fi
+
 # Use tar to copy files, excluding runtime/config data
 (cd "$SOURCE_DIR" && tar cf - \
     --exclude='.venv' \
@@ -224,7 +236,6 @@ echo "Updating application files from $SOURCE_DIR to $INSTALL_DIR..."
     --exclude='.env' \
     --exclude='.config' \
     --exclude='.wheels' \
-    --exclude='config/gunicorn.conf.py' \
     --exclude='./install_linux.sh' \
     --exclude='./install_freebsd.sh' \
     --exclude='./install_netbsd.sh' \
@@ -359,10 +370,10 @@ for pkg_version in $WHEEL_PACKAGES; do
     version=$(echo "$pkg_version" | sed 's/.*-//')
     wheel_pkg_name=$(echo "$pkg_name" | tr '-' '_')
 
-    # Determine ABI tag - cryptography publishes abi3 wheels tagged
-    # cp311-abi3 (compatible with 3.11+), others use cp312-cp312
+    # Determine ABI tag - cryptography ships an abi3 wheel tagged with the
+    # Python version the wheel set was built with; others use cp312-cp312
     if [ "$pkg_name" = "cryptography" ]; then
-        ABI_TAG="cp311-abi3"
+        ABI_TAG="${PYTHON_TAG}-abi3"
     else
         ABI_TAG="${PYTHON_TAG}-${PYTHON_TAG}"
     fi

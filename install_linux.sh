@@ -42,6 +42,25 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Confirm that the administrator installed the distribution packages
+# documented in the README.md Prerequisites section before any changes
+# are made. Installation must not continue without an explicit 'y'.
+echo "Before continuing, confirm the required packages for your distribution"
+echo "are installed. The package lists are in the 'Prerequisites' section of"
+echo "README.md in this directory."
+echo
+printf "Have you installed the required packages listed in README.md? (press y to continue): "
+read -r PACKAGES_CONFIRMED || PACKAGES_CONFIRMED=""
+if [ "$PACKAGES_CONFIRMED" != "y" ] && [ "$PACKAGES_CONFIRMED" != "Y" ]; then
+    echo
+    echo -e "${RED}Installation stopped.${NC}"
+    echo "Install the packages listed in the README.md Prerequisites section"
+    echo "for your distribution, then rerun this installer."
+    exit 1
+fi
+echo -e "${GREEN}✓${NC} Required packages confirmed"
+echo
+
 # Function to check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -89,7 +108,7 @@ echo -e "${GREEN}✓${NC} Python $PYTHON_VERSION found ($PYTHON_CMD)"
 
 if ! command_exists node; then
     echo -e "${RED}Error: Node.js is not installed${NC}"
-    echo "Please install Node.js v20+ and try again"
+    echo "Please install Node.js v22+ and try again"
     exit 1
 fi
 
@@ -116,7 +135,7 @@ case "$NODE_REAL_PATH:$NPM_REAL_PATH" in
         echo "build runs as the 'webzfs' service account with HOME=/opt/webzfs,"
         echo "and snapd rejects home directories outside of /home."
         echo
-        echo "Please install a system (non-Snap) Node.js 20+ and npm, then"
+        echo "Please install a system (non-Snap) Node.js 22+ and npm, then"
         echo "rerun this installer. For example, on Debian/Ubuntu:"
         echo
         echo "  sudo apt update"
@@ -129,21 +148,21 @@ case "$NODE_REAL_PATH:$NPM_REAL_PATH" in
         ;;
 esac
 
-# Enforce the Node.js 20+ requirement
+# Enforce the Node.js 22+ requirement
 NODE_VERSION=$(node --version 2>/dev/null | sed 's/^v//')
 NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
 
 case "$NODE_MAJOR" in
     ''|*[!0-9]*)
         echo -e "${RED}Error: Unable to determine the Node.js version${NC}"
-        echo "Please install Node.js v20 or newer and try again"
+        echo "Please install Node.js v22 or newer and try again"
         exit 1
         ;;
 esac
 
-if [ "$NODE_MAJOR" -lt 20 ]; then
-    echo -e "${RED}Error: Node.js 20+ is required (found ${NODE_VERSION})${NC}"
-    echo "Please install Node.js v20 or newer and try again"
+if [ "$NODE_MAJOR" -lt 22 ]; then
+    echo -e "${RED}Error: Node.js 22+ is required (found ${NODE_VERSION})${NC}"
+    echo "Please install Node.js v22 or newer and try again"
     exit 1
 fi
 
@@ -317,6 +336,8 @@ if [ ! -f "${DATA_DIR}/health_schedules.json" ]; then
     echo '{"schedules": [], "next_id": 1}' > "${DATA_DIR}/health_schedules.json"
 fi
 
+install -d -o "$WEBZFS_USER" -g "$WEBZFS_USER" -m 0755 \
+    "${DATA_DIR}/generated/systemd"
 chown -R "$WEBZFS_USER:$WEBZFS_USER" "$DATA_DIR"
 echo -e "${GREEN}✓${NC} Data directory and files created"
 echo
@@ -397,82 +418,43 @@ chown "$WEBZFS_USER:$WEBZFS_USER" "$TEMP_INSTALL_SCRIPT"
 if ! su -s /bin/bash "$WEBZFS_USER" -c "bash $TEMP_INSTALL_SCRIPT"; then
     echo -e "${RED}Error: Installation failed${NC}"
     echo "Check $LOG_FILE for details"
-    rm -f "$TEMP_INSTALL_SCRIPT"
+    unlink "$TEMP_INSTALL_SCRIPT"
     exit 1
 fi
+unlink "$TEMP_INSTALL_SCRIPT"
 
-# Clean up the temporary script
-rm -f "$TEMP_INSTALL_SCRIPT"
-
-echo
-echo -e "${GREEN}✓${NC} Python dependencies installed"
-echo -e "${GREEN}✓${NC} Node.js dependencies installed"
-echo -e "${GREEN}✓${NC} Static assets built"
-echo -e "${GREEN}✓${NC} Configuration file created"
-echo
-
-# Configure sudo permissions
+# Validate the complete policy before replacing a live sudoers file.
 SUDOERS_FILE="/etc/sudoers.d/webzfs"
+SUDOERS_SRC="${SOURCE_DIR}/sudoers.d/webzfs.linux"
 echo "Configuring sudo permissions..."
-
-cat > "$SUDOERS_FILE" << 'SUDO_EOF'
-# WebZFS sudo permissions
-# Allow webzfs user to execute ZFS and SMART commands
-
-# ZFS commands (multiple paths for different distributions)
-webzfs ALL=(ALL) NOPASSWD: /usr/sbin/zpool, /usr/sbin/zfs, /usr/sbin/zdb -l *, /usr/bin/zpool, /usr/bin/zfs, /usr/bin/zdb -l *, /sbin/zpool, /sbin/zfs, /sbin/zdb -l *
-
-# SMART monitoring (multiple paths for different distributions)
-webzfs ALL=(ALL) NOPASSWD: /usr/sbin/smartctl, /usr/bin/smartctl, /sbin/smartctl
-
-# Disk utilities
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/lsblk, /usr/bin/blkid
-
-# Open file / lock inspection (pool export busy investigation)
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/lsof, /usr/bin/lslocks, /bin/lsof, /bin/lslocks
-
-# Sanoid/Syncoid (optional)
-webzfs ALL=(ALL) NOPASSWD: /usr/sbin/sanoid, /usr/sbin/syncoid, /usr/bin/sanoid, /usr/bin/syncoid, /usr/local/sbin/sanoid, /usr/local/sbin/syncoid
-
-# Service management (systemctl for system services page)
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /bin/systemctl
-
-# Crontab editing
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/crontab
-
-# Scheduled syncoid job timers.
-# Unit files are created and edited with "sudo tee" (covered by the
-# general tee entry below) and enabled/disabled/reloaded with
-# "sudo systemctl" (covered by the systemctl entry above). The explicit
-# tee entries here document that intent and keep timer management
-# working even if the general tee entry is ever narrowed. rm is
-# restricted to WebZFS-owned unit files only.
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/systemd/system/webzfs-syncoid-job-*, /bin/tee /etc/systemd/system/webzfs-syncoid-job-*
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/systemd/system/webzfs-syncoid-job-*, /bin/rm -f /etc/systemd/system/webzfs-syncoid-job-*
-
-# Unified Scheduling Hub timers. All scheduled task types (scrub, SMART
-# self-test, health check, and replication) use the webzfs-task-* unit
-# naming scheme managed by services/job_scheduler.py.
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/systemd/system/webzfs-task-*, /bin/tee /etc/systemd/system/webzfs-task-*
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/rm -f /etc/systemd/system/webzfs-task-*, /bin/rm -f /etc/systemd/system/webzfs-task-*
-
-# File editing (for config files like smartd.conf, sanoid.conf)
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/cat, /usr/bin/tee, /usr/bin/mkdir
-
-# Read system journal and plain-text syslog files for the
-# Observability -> System Log page. journalctl needs sudo (or
-# systemd-journal group) on most distros. tail covers Debian/Ubuntu
-# (/var/log/syslog) and old RHEL (/var/log/messages).
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/journalctl, /bin/journalctl, /usr/bin/tail, /bin/tail
-
-# Support bundle log collection. Reading /var/log/messages and
-# /var/log/syslog (typically mode 640 root:adm) and the kernel ring
-# buffer requires elevated privileges for the unprivileged webzfs user.
-webzfs ALL=(ALL) NOPASSWD: /usr/bin/grep, /bin/grep, /usr/bin/dmesg, /bin/dmesg
-SUDO_EOF
-
-
-chmod 0440 "$SUDOERS_FILE"
+if [ ! -f "$SUDOERS_SRC" ] || ! command_exists visudo || \
+   ! visudo -c -f "$SUDOERS_SRC"; then
+    echo "Invalid or missing WebZFS sudoers policy; installation stopped."
+    exit 1
+fi
+SUDOERS_BACKUP="$(mktemp)"
+if [ -f "$SUDOERS_FILE" ]; then
+    cp -p "$SUDOERS_FILE" "$SUDOERS_BACKUP"
+else
+    unlink "$SUDOERS_BACKUP"
+fi
+SUDOERS_STAGED="${SUDOERS_FILE}.staged"
+install -o root -g root -m 0440 "$SUDOERS_SRC" "$SUDOERS_STAGED"
+mv -f "$SUDOERS_STAGED" "$SUDOERS_FILE"
+if ! visudo -c || ! sudo -n -l >/dev/null 2>&1; then
+    echo "Sudoers validation failed; restoring the previous policy."
+    if [ -f "$SUDOERS_BACKUP" ]; then
+        install -o root -g root -m 0440 "$SUDOERS_BACKUP" "$SUDOERS_STAGED"
+        mv -f "$SUDOERS_STAGED" "$SUDOERS_FILE"
+        unlink "$SUDOERS_BACKUP"
+    else
+        unlink "$SUDOERS_FILE"
+    fi
+    exit 1
+fi
+if [ -f "$SUDOERS_BACKUP" ]; then
+    unlink "$SUDOERS_BACKUP"
+fi
 echo -e "${GREEN}✓${NC} Sudo permissions configured"
 
 echo

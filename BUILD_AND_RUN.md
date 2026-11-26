@@ -34,7 +34,7 @@ sudo ./install_freebsd.sh
 ```
 
 The installation scripts will:
-1. Check for required dependencies (Python 3.11+, Node.js v20+, npm)
+1. Check for required dependencies (Python 3.12+, Node.js v22+, npm)
 2. Create the `webzfs` system user (Linux Only)
 3. Install the application to `/opt/webzfs`
 4. Create a Python virtual environment
@@ -73,7 +73,7 @@ chmod +x setup_dev.sh
 ```
 
 The `setup_dev.sh` script will:
-- Check for required dependencies (Python 3.11+, Node.js v20+, npm, make, libsodium)
+- Check for required dependencies (Python 3.12+, Node.js v22+, npm, make, libsodium)
 - Create a Python virtual environment (`.venv`) in your current directory
 - Install all Python dependencies
 - Install Node.js dependencies
@@ -241,14 +241,49 @@ sudo systemctl restart nginx        # or caddy, etc.
 
 Alternatively, set `SOCKET_UMASK=0o000` in `.env` to allow any user to connect (less secure, but simpler).
 
+### Reverse Proxy / HTTPS Configuration
+
+WebZFS renders its own stylesheets and scripts with root-relative `/static/...` paths, so pages served through an HTTPS reverse proxy (nginx, Caddy, Nginx Proxy Manager) load their assets over the same scheme as the page. No extra configuration is needed to avoid mixed-content errors.
+
+The proxy should still forward the original scheme and client address so that WebZFS sees accurate request metadata. A typical nginx location block includes:
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+WebZFS only honors `X-Forwarded-Proto` and `X-Forwarded-For` from trusted proxy peers. By default only loopback (`127.0.0.1` and `::1`) is trusted, which covers a proxy running on the same host. If the proxy connects from another host or a container network (for example Nginx Proxy Manager in Docker), add that proxy's address or the smallest appropriate CIDR in `/opt/webzfs/.env`:
+
+```bash
+FORWARDED_ALLOW_IPS=127.0.0.1,::1,172.18.0.0/16
+```
+
+The `172.18.0.0/16` value is only an example; use the network actually assigned to your proxy. Do not set `FORWARDED_ALLOW_IPS=*` on a listener that other systems can reach, because forwarded headers are ordinary request headers and any client could then assert its own scheme and address.
+
+Restart WebZFS after changing `.env`:
+
+```bash
+sudo systemctl restart webzfs          # Linux
+sudo service webzfs restart            # FreeBSD
+```
+
 ### Gunicorn Configuration
 
-Advanced server settings can be configured in `config/gunicorn.conf.py`:
+Server settings are read from `/opt/webzfs/.env` by `config/gunicorn.conf.py`:
 
-- Worker processes (default: auto-calculated based on CPU cores)
-- Bind address and port
-- Timeout settings
-- Logging configuration
+- `BIND_IP` and `PORT`: TCP listen address (default `127.0.0.1:26619`)
+- `BIND`: Unix socket target, for example `unix:/run/webzfs/webzfs.sock`
+- `SOCKET_UMASK`: Unix socket permissions (default `0o007`)
+- `WORKERS`: Worker processes (default `2`)
+- `FORWARDED_ALLOW_IPS`: Trusted reverse proxy addresses
+
+Do not edit `config/gunicorn.conf.py` directly. The update scripts replace it
+on every update and save the previous copy as `config/gunicorn.conf.py.bak`
+when it differs. Installations updated before this change may still have an
+old copy that ignores `.env` and always binds to `127.0.0.1`. Running the
+current update script replaces it.
 
 ## Development Mode
 
@@ -472,7 +507,7 @@ sudo service webzfs status
 # Check Python version
 python3 --version
 
-# Install Python 3.11+ using your package manager
+# Install Python 3.12+ using your package manager
 ```
 
 **Problem: Node.js not found or too old**
@@ -481,7 +516,7 @@ python3 --version
 # Check Node.js version
 node --version
 
-# Install Node.js v20+ from your package manager or https://nodejs.org
+# Install Node.js v22+ from your package manager or https://nodejs.org
 ```
 
 **Problem: Virtual environment creation fails**
@@ -492,7 +527,7 @@ sudo apt install python3-venv         # Debian/Ubuntu
 sudo dnf install python3              # RHEL/Fedora
 
 # On FreeBSD, ensure pip is installed
-sudo pkg install py311-pip
+sudo pkg install py312-pip
 ```
 
 **Problem: npm install fails**
