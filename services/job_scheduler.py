@@ -374,10 +374,15 @@ class TaskScheduler:
         # Stop and disable first; ignore errors when units do not exist.
         self._systemctl("disable", "--now", timer_name, check=False)
 
+        # A deployment whose sudo policy does not allow `rm` can name its own
+        # helper, which receives the unit path as its only argument.
+        remover = os.environ.get("WEBZFS_UNIT_REMOVER")
+        remove = [remover] if remover else ["rm", "-f"]
+
         for unit_path in (service_path, timer_path):
             try:
                 subprocess.run(
-                    ["sudo", "rm", "-f", unit_path],
+                    ["sudo", *remove, unit_path],
                     capture_output=True, text=True, timeout=15, check=True,
                 )
             except subprocess.CalledProcessError as remove_error:
